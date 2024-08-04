@@ -45,6 +45,32 @@ class user(db.Model):
             'pwd':self.pwd,
             'datecreated':self.datecreated
         }
+        
+class Books(db.Model):
+    __tablename__ = "Books"
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String, nullable=False)
+    author = db.Column(db.String, nullable=False)
+    description = db.Column(db.Text)
+    price = db.Column(db.Numeric, nullable=False)
+    category = db.Column(db.String)
+    cover_image = db.Column(db.String)  # URL to the cover image
+    created_at = db.Column(db.DateTime, default=datetime.now())
+
+    def todict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'author': self.author,
+            'description': self.description,
+            'price': str(self.price),  # Convert Decimal to string for JSON serialization
+            'category': self.category,
+            'cover_image': self.cover_image,
+            'created_at': self.created_at.isoformat()  # Convert datetime to ISO format string
+        }
+        
+        
 @app.route('/')
 def root():
     return jsonify("Thank you for using bookstore application")
@@ -106,6 +132,94 @@ def profile():
     current_user = get_jwt_identity()
     return jsonify({"msg": f"Hello, {current_user['email']}!"}), 200
     
+@app.route('/books', methods=['POST'])
+@jwt_required()
+def add_book():
+    data = request.get_json()
+    
+    # Scenario where no details are provided
+    if not data:
+        return jsonify({"msg": "No data provided"}), 400
+    
+    title = data.get('title')
+    author = data.get('author')
+    description = data.get('description')
+    price = data.get('price')
+    category = data.get('category')
+    cover_image = data.get('cover_image')
+    
+    # Scenario where any details are missing
+    if title is None or author is None or price is None:
+        return jsonify({"msg": "Title, author, or price is missing"}), 400
+    
+    new_book = Books(
+        title=title,
+        author=author,
+        description=description,
+        price=price,
+        category=category,
+        cover_image=cover_image
+    )
+    
+    db.session.add(new_book)
+    db.session.commit()
+    return jsonify(new_book.todict()), 201
+
+@app.route('/books/<int:book_id>', methods=['GET'])
+def get_book(book_id):
+    book = Books.query.get(book_id)
+    if book:
+        return jsonify(book.todict()), 200
+    return jsonify({"msg": "Book not found"}), 404
+
+@app.route('/books', methods=['GET'])
+def list_books():
+    books = Books.query.all()
+    return jsonify([book.todict() for book in books]), 200
+
+@app.route('/books/<int:book_id>', methods=['PUT'])
+@jwt_required()
+def update_book(book_id):
+    data = request.get_json()
+    book = Books.query.get(book_id)
+    
+    if not book:
+        return jsonify({"msg": "Book not found"}), 404
+    
+    title = data.get('title')
+    author = data.get('author')
+    description = data.get('description')
+    price = data.get('price')
+    category = data.get('category')
+    cover_image = data.get('cover_image')
+    
+    if title:
+        book.title = title
+    if author:
+        book.author = author
+    if description:
+        book.description = description
+    if price:
+        book.price = price
+    if category:
+        book.category = category
+    if cover_image:
+        book.cover_image = cover_image
+    
+    db.session.commit()
+    return jsonify(book.todict()), 200
+
+@app.route('/books/<int:book_id>', methods=['DELETE'])
+@jwt_required()
+def delete_book(book_id):
+    book = Books.query.get(book_id)
+    
+    if not book:
+        return jsonify({"msg": "Book not found"}), 404
+    
+    db.session.delete(book)
+    db.session.commit()
+    return jsonify({"msg": "Book deleted"}), 200
     
 if __name__ == '__main__':
     app.run(debug=True)
