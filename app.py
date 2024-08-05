@@ -71,6 +71,28 @@ class Books(db.Model):
         }
         
         
+class Cart(db.Model):
+    __tablename__ = "Cart"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('USER.id'), nullable=False)
+    book_id = db.Column(db.Integer, db.ForeignKey('Books.id'), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False, default=1)
+    created_at = db.Column(db.DateTime, default=datetime.now())
+
+    user = db.relationship('user', backref='carts')
+    book = db.relationship('Books', backref='carts')
+
+    def todict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'book_id': self.book_id,
+            'quantity': self.quantity,
+            'created_at': self.created_at.isoformat()
+        }
+
+
 @app.route('/')
 def root():
     return jsonify("Thank you for using bookstore application")
@@ -220,6 +242,140 @@ def delete_book(book_id):
     db.session.delete(book)
     db.session.commit()
     return jsonify({"msg": "Book deleted"}), 200
+
+
+@app.route('/cart', methods=['POST'])
+@jwt_required()
+def add_to_cart():
+    data = request.get_json()
+    identity = get_jwt_identity()
+    email = identity.get('email')
+    
+    if email is None:
+        return jsonify({"msg": "Email not found in token"}), 401
+    
+    user_record = user.query.filter_by(email=email).first()
+    if not user_record:
+        return jsonify({"msg": "User not found"}), 404
+    
+    user_id = user_record.id
+    
+    book_id = data.get('book_id')
+    quantity = data.get('quantity', 1)
+    
+    if book_id is None or quantity is None:
+        return jsonify({"msg": "Book ID or quantity is missing"}), 400
+    
+    # Check if the book exists
+    book = Books.query.get(book_id)
+    if not book:
+        return jsonify({"msg": "Book not found"}), 404
+    
+    # Check if the item is already in the cart
+    existing_cart_item = Cart.query.filter_by(user_id=user_id, book_id=book_id).first()
+    if existing_cart_item:
+        existing_cart_item.quantity += quantity
+    else:
+        new_cart_item = Cart(user_id=user_id, book_id=book_id, quantity=quantity)
+        db.session.add(new_cart_item)
+    
+    db.session.commit()
+    return jsonify({"msg": "Book added to cart"}), 201
+
+@app.route('/cart', methods=['GET'])
+@jwt_required()
+def view_cart():
+    identity = get_jwt_identity()
+    email = identity.get('email')
+    
+    if email is None:
+        return jsonify({"msg": "Email not found in token"}), 401
+    
+    user_record = user.query.filter_by(email=email).first()
+    if not user_record:
+        return jsonify({"msg": "User not found"}), 404
+    
+    user_id = user_record.id
+    cart_items = Cart.query.filter_by(user_id=user_id).all()
+    
+    return jsonify([item.todict() for item in cart_items]), 200
+
+@app.route('/cart/<int:item_id>', methods=['PUT'])
+@jwt_required()
+def update_cart_item(item_id):
+    data = request.get_json()
+    quantity = data.get('quantity')
+    
+    identity = get_jwt_identity()
+    email = identity.get('email')
+    
+    if email is None:
+        return jsonify({"msg": "Email not found in token"}), 401
+    
+    user_record = user.query.filter_by(email=email).first()
+    if not user_record:
+        return jsonify({"msg": "User not found"}), 404
+    
+    user_id = user_record.id
+    cart_item = Cart.query.get(item_id)
+    
+    if not cart_item or cart_item.user_id != user_id:
+        return jsonify({"msg": "Cart item not found or unauthorized"}), 404
+    
+    if quantity is not None:
+        cart_item.quantity = quantity
+    
+    db.session.commit()
+    return jsonify(cart_item.todict()), 200
+
+@app.route('/cart/<int:item_id>', methods=['DELETE'])
+@jwt_required()
+def remove_from_cart(item_id):
+    identity = get_jwt_identity()
+    email = identity.get('email')
+    
+    if email is None:
+        return jsonify({"msg": "Email not found in token"}), 401
+    
+    user_record = user.query.filter_by(email=email).first()
+    if not user_record:
+        return jsonify({"msg": "User not found"}), 404
+    
+    user_id = user_record.id
+    cart_item = Cart.query.get(item_id)
+    
+    if not cart_item or cart_item.user_id != user_id:
+        return jsonify({"msg": "Cart item not found or unauthorized"}), 404
+    
+    db.session.delete(cart_item)
+    db.session.commit()
+    return jsonify({"msg": "Cart item removed"}), 200
+
+@app.route('/checkout', methods=['POST'])
+@jwt_required()
+def checkout():
+    identity = get_jwt_identity()
+    email = identity.get('email')
+    
+    if email is None:
+        return jsonify({"msg": "Email not found in token"}), 401
+    
+    user_record = user.query.filter_by(email=email).first()
+    if not user_record:
+        return jsonify({"msg": "User not found"}), 404
+    
+    user_id = user_record.id
+    cart_items = Cart.query.filter_by(user_id=user_id).all()
+    
+    if not cart_items:
+        return jsonify({"msg": "Cart is empty"}), 400
+    
+
+    db.session.query(Cart).filter_by(user_id=user_id).delete()
+    db.session.commit()
+    
+    return jsonify({"msg": "Checkout completed"}), 200
+
     
 if __name__ == '__main__':
     app.run(debug=True)
